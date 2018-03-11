@@ -1,0 +1,818 @@
+---
+title: "DataSciCW2"
+author: "Hitesh Kumar"
+date: "27 December 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Libraries
+
+```{r Loading libraries}
+# Loading libraries, note: there may be some conflicts, but wont affect results
+library(igraph)
+library(tidyverse)
+library(magrittr)
+library(dplyr)
+library(RColorBrewer)
+set.seed(1234)
+```
+
+Hitesh Kumar (01058403) Rmd file for coursework 2:
+
+### Data & Q1
+
+Lets begin by visually inspecting the data we are given to get some insight before any calculations
+
+```{r Plotting network}
+load("doctornet.Rdata")
+
+par(mar = c(0, 0, 2, 0))
+plot(docnet2, vertex.size = 4, vertex.color = "blue",
+     vertex.frame.color = "black", vertex.shape = "circle",
+     vertex.label = NA, edge.curved = 0, edge.arrow.size = 0,
+     edge.color = "grey", edge.lty = 2,
+     main = "Visual representation of 'docnet2' network data")
+
+is_directed(docnet2)
+```
+
+As expected, there seem to be 4 distinct groups forming, 1 for each city and there are a few who seem to be distant from all groups. This indicates that community detection later will yield good results, and we have a good idea what answers to expect from the algorithms. Additionally, we can check easily that this network is directed, the possible implications of which we discuss later. One thing to note is that any structures that might be observed in this plot don't intentionally have anything to do with physical location, as igraph plots their locations based only on which connections they have with other nodes, and so its entirely possible that what we see above may not be 4 sets of doctors in 4 cities, but rather 4 groups that interact with each other regardless of which city they are from. We discuss this and some results later.
+
+Computing some basic statistics, we find the number of doctors (vertices) and interactions (edges) to be:
+
+```{r Size of network}
+# Finding number of verticies and edges in graph
+num_doctors = gorder(docnet2)
+num_interactions = gsize(docnet2)
+
+cat("Number of doctors:", num_doctors, "\n")
+cat("Number of interactions:", num_interactions, "\n")
+```
+
+We calculate the average number of interactions as the mean degree, however we should also consider the average outdegree in particular, as a directed edge COULD represent an instance of a doctor passing advice or knowledge about some solution to a medical problem onto another doctor. Naturally, such knowledge can only be passed on if one doctor had it prior to any interaction and the other did not, hence a directed edge best represents this transfer of information. Keeping this idea in mind may help some analysis later too when considering spread of information about cures for instance. If we later find that it is not useful, then all we have lost is a few minutes of work and would only be mildly disappointed in ourselves.
+
+```{r Average degrees}
+# Average outdegree 
+av_outdegree = mean(degree(docnet2, mode = "out"))
+# Average degree = 2 * average outdegree
+cat("Average number of interactions per doctor:", av_outdegree*2, "\n")
+cat("Average number of times advice given per doctor:", av_outdegree, "\n")
+```
+
+The typical doctor had between 13 and 14 interactions in the time frame of this survey, hinting that most medical choices that were influenced rather than made alone were influenced by a wide range of sources, improving reliability.
+
+If we plot a histogram of the degree distribution, we can get a better idea of how "social" doctors are as smaller groups rather than overall, as we can find how many doctors interact a certain number of times. Again, we consider both the degrees of the nodes and their outdegrees separately for some additional insight. Small technicality: a bar chart would be better here as having both the possible degree values and their frequencies as x and y data is included in the data frame. This not only gives us better control of the plot and its appearance, but also avoids some difficulties of histograms. Hopefully after this is over, I will never have to put up with ggplot again. The plot is the same regardless, showing the degree distribution. 
+
+```{r Plotting degree distribution}
+# Setting up data frame
+node_degs = degree.distribution(docnet2) * gorder(docnet2)
+node_outdegs = degree.distribution(docnet2, mode = "out") * gorder(docnet2)
+
+deg_dist_data = data.frame(
+    # Possible degree values for any node
+    deg_values = c(0 : (length(node_degs)-1)),
+    # The frequency of those degrees occuring
+    deg_freqs = node_degs
+    )
+
+outdeg_dist_data = data.frame(
+    # Possible outdegree values for any node
+    outdeg_values = c(0 : (length(node_outdegs)-1)),
+    # The frequency of those degrees occuring
+    outdeg_freqs = node_outdegs
+    )
+
+# ggplot antics
+ggplot(deg_dist_data) +
+    geom_bar(stat = "identity",
+             aes(x = deg_values, y = deg_freqs), fill = "purple",
+             color = "black", width = 0.5) +
+    scale_y_continuous(breaks = seq(0, max(node_degs), 2)) +
+    scale_x_continuous(breaks = seq(0, length(node_degs), 4)) + theme_bw() +
+    theme(panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          axis.line = element_line(colour = "black", size = 1.5)) + 
+    xlab("Degree - Number of interactions") +
+    ylab("Frequency - Number of doctors") + 
+    ggtitle("Degree distribution of docnet2 network")
+
+ggplot(outdeg_dist_data) +
+    geom_bar(stat = "identity",
+             aes(x = outdeg_values, y = outdeg_freqs), fill = "purple",
+             color = "black", width = 0.8) +
+    scale_y_continuous(breaks = seq(0, max(node_outdegs), 8)) +
+    scale_x_continuous(breaks = seq(0, length(node_outdegs), 1)) + theme_bw() +
+    theme(panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          axis.line = element_line(colour = "black", size = 1.5)) + 
+    xlab("Outdegree - Number of times advice given") +
+    ylab("Frequency - Number of doctors") + 
+    ggtitle("Outdegree distribution of docnet2 network")
+```
+
+From these plots we get some interesting information. For the degree distribution, we see first that having approximately 8 - 16 interactions were most common, implying most doctors had a reasonably wide range of sources for medical discussions or socialising. What is surprising is the left end of the plot, showing a few extremes with 32 - 56 interactions, meaning there are a few doctors acting as hubs in this network, who are very well connected and discuss medical issues or socialise with many other doctors. This has many interesting implications, with the most interesting being the idea that there are some doctors who would be much better at spreading information through this network than others. From the outdegree plot, we see another pattern emerge. We see that the clear majority of vertices have a high outdegree, which by our theory implies that most doctors pass on advice or knowledge to 6-9 other doctors whereas only a few do not pass information on. This suggests that overall there are good links between doctors and that information may be spreading through the network as a whole quite quickly. Whether this is between doctors in the same city or between cities is a problem for later perhaps.
+
+To determine if the network is scale free, we could perform some statistical tests such as kolomogorov-smirnov or others, but since its not expected, we will meet expectations and speculate based on qualitative evidence. From the degree distribution plot, and as we discuss above, there are a noticeable number of nodes with a very large degree, in fact there are 14 with degree greater than or equal to twice the mean degree (just as a benchmark for how large is much larger). This makes up about 6% of the nodes in the network and so this could be evidence that this network is scale-free. This also might make sense in the application of our analysis, as its likely that doctors who are more popular or renowned for their knowledge would be the place to go to for other doctors seeking advice or to socialise, and hence as nodes are added to the network, its entirely possible they would be added preferentially to node with a higher degree. Additionally, on removal of nodes at random, its unlikely that If some statistical tests were to be conducted or even if we plotted the distribution on a log-log plot we may be able to make a stronger claim. As of current, we maintain that the network is scale-free.
+
+### Q2 - Community detection
+
+Whilst we already have defined communities in terms of the cities that the doctors are from, with the degree distributions we observe above, its likely the some doctors may be acting as hubs connecting two cities with the number of interactions they've had, or that some doctors may operate in one city but may be interacting primarily with doctors of another city. For this reason, a more mathematically sound separation of communities may be appropriate. The method used here is the "leading eigenvector method", developed by Newman and implemented in R by Gabor Csardi.
+
+```{r Community detection}
+# Making the adjacency matrix symmetrical
+undirected_docnet = as.undirected(docnet2)
+# Performing leading eigenvecor community detection
+doc_comms = leading.eigenvector.community(undirected_docnet)
+comm_labels = doc_comms$membership
+
+# Plotting the network
+par(mar = c(0, 0, 2, 0))
+
+# Colored by cities
+plot.igraph(docnet2, vertex.size = 4, vertex.color = V(docnet2)$nodeCity,
+            vertex.frame.color = "black", vertex.shape = "circle",
+            vertex.label = NA, edge.curved = 0, edge.arrow.size = 0,
+            edge.color = "grey", edge.lty = 2,
+            main = "docnet2 network (Colored by cities)")
+# Colored by detected communities
+comm_colors = rainbow(5)[comm_labels]
+plot(doc_comms, docnet2, vertex.size = 4, col = comm_colors,
+     vertex.frame.color = "black", vertex.shape = "circle", vertex.label = NA,
+     edge.curved = 0, edge.arrow.size = 0, edge.color = "grey", edge.lty = 2,
+     main = "docnet2 network (Colored by detected communities)")
+```
+
+WOW we have a lot to discuss here. After community detection, we find that there are actually 5 communities that arise from the leading eigenvector method, something that was not expected with only 4 cities to start with. Additionally, we see a lot of "overlap" with nodes that seem to be close location wise on the plot, but end up actually being in different communities.
+
+It was stressed earlier that the positions of the nodes are not geographical, and so its not at all surprising to see doctors from the "yellow" community being within the colored bounds of the "red" community (Specifics may differ between plots because of igraph's randomness). This is likely because the plotting function bases the locations of the nodes on how it would best look and be clearer as a visual, whilst showing a clear relationship between groups of nodes that share a lot of common neighbors. What this indicates is that despite the city not being a factor in the above representations, the fact that two communities seem to overlap so much indicates that there is a much stronger connection between the two relative to any other communities, but the connections within the two are still "exclusive" enough to make them separate communities. 
+
+We can attempt to quantify this idea by creating a confusion matrix with information on how "correct" our community detection is if we assume that the "true" communities are the cities the doctors operate in.
+
+```{r Confusion matrix 1}
+# Creating 4x5 confusion matrix
+conf_mat = table(Actual = V(docnet2)$nodeCity, Predicted = doc_comms$membership)
+conf_mat
+
+# Calcuating accuracy of community detection
+accuracy = sum(diag(conf_mat)) / sum(conf_mat)
+cat("\n Accuracy = ", accuracy)
+```
+
+Firstly we note that this isn't a binary classification, hence the confusion matrix will be 4x5 naturally. Secondly, we observe a huge issue: does the community detection algorithm map nodes in city 3 for example to community 3 necessarily? As in, despite one city being split into two communities, does the algorithm label the remaining 3 cities as themselves? What we can see from the confusion matrix is that city 1 has been split into two large communities, which are labelled in output as 1 and 4. The problem is that 4 was already a number assigned to a city we had before any community detection. Hence now we see that the algorithm "splits" city 4 with one node in community 2 and 34 nodes in community 5. The stray node in community 2 is no issue but the mapping of city 4 to community 5 is clearly incorrect as those nodes have retained their grouping but have been labelled in a way such that checking the correct agreement between old and new memberships is now impossible. This explains why the plots above show a good split into well defined communities but the accuracy is only 56%. We can observe this more clearly if we plot the network with nodes colored by their being assigned to the same group before and after community detection, i.e a "correctness" plot perhaps.
+
+```{r Correctness plot 1}
+# Vector of correct predictions, for colouring the plot
+correct_preds = c(V(docnet2)$nodeCity == doc_comms$membership)
+correct_cols = ifelse(correct_preds == TRUE, "green", "red")
+
+# Plotting the network colored by whether node was grouped correctly
+par(mar = c(3, 0, 2, 0))
+plot(docnet2, vertex.size = 4.5, vertex.color = correct_cols,
+     vertex.frame.color = "black", vertex.shape = "circle",
+     vertex.label = NA, edge.curved = 0, edge.arrow.size = 0,
+     edge.color = "grey", edge.lty = 2,
+     main = "docnet2 network (Colored by correctness of community assignment)")
+legend(1, 1, legend = c("Correct", "Incorrect"), title = "Result of detection",
+       col = c("green", "red"), lty = 0, pch = 16)
+```
+
+We can see as expected that the largest city has been divided into two communities and so naturally the new community would have been incorrectly grouped if we assumed that the correct way to group them is by city. However we also see that another group (city 4) is still clearly a city, and we can see by mapping node indexes to communities (post detection) almost all these nodes have been grouped into a single community (community 5) but we are getting an incorrect answer because we haven't got a mechanism to determine that what we used to call group 4 is now almost the same thing but its called group 5. To tackle this issue, we can either swap all labels of communities 4 and 5 in the post-detection membership vector or simply rename all nodes in city 4 as city 5, with no loss to the all the nodes edges to cities 1, 2 and 3. This then allows us to correctly calculate our accuracy based on the node city being correct.
+
+
+```{r Confusion matrix 2}
+# relabeling all city 4 nodes as city 5 nodes
+node_cities = V(docnet2)$nodeCity
+node_cities = ifelse(node_cities == 4, 5, node_cities)
+
+# Creating 4x5 confusion matrix
+conf_mat = table(Actual = node_cities, Predicted = doc_comms$membership)
+conf_mat
+
+# Calcuating accuracy of community detection
+accuracy = (sum(diag(conf_mat)) + conf_mat[4, 5]) / sum(conf_mat)
+cat("\n Accuracy = ", accuracy)
+```
+
+Finally now, we have the true accuracy coming in at just over 70%. This may still seem quite low but do note that city 1 which has been split into two communities (now called communities 1 and 4) make up nearly 50% of the nodes in the network, and as naturally there is no definition of a 5th community being correctly grouped from 4 communities, we can see why the results may be impressive but the accuracy is relatively low compared to what would be expected. To get a visual, perhaps better indication of this idea and process, we can do a "correctness" plot of the network again.
+
+```{r}
+# Vector of correct predictions, for colouring the plot
+correct_preds = c(node_cities == doc_comms$membership)
+correct_cols = ifelse(correct_preds == TRUE, "green", "red")
+# Plotting the network colored by whether node was grouped correctly
+par(mar = c(3, 0, 2, 0))
+plot(docnet2, vertex.size = 4.5, vertex.color = correct_cols, 
+     vertex.frame.color = "black", vertex.shape = "circle",
+     vertex.label = NA, edge.curved = 0, edge.arrow.size = 0,
+     edge.color = "grey", edge.lty = 2,
+     main = "docnet2 network (Colored by correctness of community assignment)")
+legend(1, 1, legend = c("Correct", "Incorrect"), title = "Result of detection",
+       col = c("green", "red"), lty = 0, pch = 16)
+```
+
+Now its clear that the previously present communities have been preserved (with a few exceptions as we explained before) and only city 1 has been split into two communities, which now we must say is incorrect as there never were 5 cities to begin with.
+
+### Q3 - Giant components and deleting edges
+
+Finding the components of a given graph is relatively simple in R, however its defining and justifying what type of components you look for that is difficult. Here we choose to look for strongly connected components in our directed network, which may be a better way to determine components as we are now looking for sets of vertices for which any pair have a directed path connecting them in that component. This may be better in our case as we may want to only consider components or groups of doctors that that can trace their knowledge back to a source via reversing a directed path, and the presence of a component then would mean a group of doctors that are inter-dependent only and do not gain or transfer knowledge to others outside the component. We also do this because the other two ways of finding components return silly results. 
+
+First, we find and plot the components to get a rough idea of whats happening. 
+
+```{r Finding components}
+# Finding the strongly connected components of the directed network
+component_data = clusters(docnet2, mode = "strong")
+# Plotting colored by component
+component_cols = rainbow(component_data$no)[component_data$membership]
+par(mar = c(0, 0, 2, 0))
+plot(docnet2, vertex.size = 4, vertex.color = component_cols, 
+     vertex.frame.color = "black", vertex.shape = "circle",
+     vertex.label = NA, edge.curved = 0, edge.arrow.size = 0,
+     edge.color = "grey", edge.lty = 2,
+     main = "docnet2 network (Colored by compnent)", 
+     mark.groups = split(1:vcount(docnet2), component_data$membership))
+```
+
+Surprisingly, we find that rather than a few components that are a significant fraction the size of the graph, we have one truly giant component containing 199 vertices and 41 others that contain either 1 or two nodes. This is really very interesting as it suggests two important things. The first is that the majority of doctors are all connected by a directed path of interactions and can potentially trace the spread of their advice or find where the information they got originally came from. The second is that there are a significant number of doctors that only take information and do not spread it further at all. This could mean a huge number of things for information spread in the network, such as the high resilience of the network overall to removing certain doctors or to know who to avoid or ignore for faster information spread. 
+
+Now we can find the relation between number of edges in this graph and the size of the largest component by removing edges. We first treat this network as an Erdos-Renyi network and try to get a theoretical grasp on how many edges we may have to remove to reduce the size of the largest component drastically, or in other words to be somewhat sure that there are no large components left in the network. If we model this network as a G(n, p) ER network, with n = 242 and p being the fraction of edges present compared to maximum possible edges (keeping in mind we have a directed network), we have a G(242, 0.0276) model (p = 0.02762251). Now we can see from known results that if p drops to below 1/n, then its deemed very likely that all components will be of size O(log(n)) and so there will be no giant components. What this means for us is that to break the one giant component we have into components of size O(log(n)), we will have to reduce p from 0.0276 to 0.0041 roughly, implying that we have to loose exactly 1370 edges.
+
+To compare this to experimental data, we should remove a randomly selected edge from the network and calculate the size of its largest component. We ca then investigate the point when this drops beyond a certain level, or if we see a sharp drop in size at any times. 
+
+```{r Removing edges}
+# Storing maximum size per each iteration
+max_comp_size = c(1:gsize(docnet2)+1)
+
+# Initial largest component size
+component_data = clusters(docnet2, mode = "strong")
+max_comp_size[1] = max(component_data$csize)
+
+temp_network = docnet2
+# Removing one by one and finding size
+for (i in 1:gsize(docnet2)) {
+    random_edge = sample(gsize(temp_network), 1)
+    # Deleting one edge
+    temp_network = delete_edges(temp_network, random_edge)
+    component_data = clusters(temp_network, mode = "strong")
+    max_comp_size[i+1] = max(component_data$csize)
+    }
+
+# Setting up data frame for plotting
+comp_size_data = data.frame(
+    # Number of nodes randomly removed
+    num_removed = c(0:1611),
+    max_comp_size
+    )
+
+# Datasets for log(n) and 1370 lines needed
+log_n_upper = data.frame(
+    nodes_rem = c(0, 1611), y = 10*ceiling(log(242)),
+    log_n = factor(10*ceiling(log(242)))
+    )
+log_n_lower = data.frame(
+    nodes_rem = c(0, 1611), y = 0.1*ceiling(log(242)),
+    log_n = factor(0.1*ceiling(log(242)))
+    )
+theory_loss = data.frame(
+    nodes_rem = 1370, y = c(1:199),
+    theory_loss = factor(ceiling(199/2))
+    )
+
+# Plotting largest component size over time
+ggplot(comp_size_data) +
+    geom_line(aes(x = num_removed, y = max_comp_size), color = "red",
+              size = 1) +
+    scale_y_continuous(breaks = seq(0, 200, 20)) +
+    scale_x_continuous(breaks = seq(0, 1611, 160)) +
+    theme_bw() +
+    theme(panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          axis.line = element_line(colour = "blue", size = 1.5)) + 
+    xlab("Number of edges removed") +
+    ylab("Size of largest component") + 
+    ggtitle("Size of largest component as edges are removed") +
+    geom_line(aes(x = nodes_rem, y), linetype = 2, log_n_upper) +
+    geom_line(aes(x = nodes_rem, y), linetype = 2, log_n_lower) +
+    geom_line(aes(x = nodes_rem, y), linetype = 2, theory_loss)
+```
+
+Now we can see how the size of the giant component decreases as we incrementally remove edges. The dotted lines represent where x = 1370 (predicted by theory) and y = 10xlog(242) and 0.1xlog(242) (condition for having no giant components, O(log(n))). This lets us quite easily see how the size of the largest component at that point in the loop compares to what the predictions from theory are. We see now that the point where the size changes from O(n) to O(log(n)) is usually after between 1100 and 1150 edges have been removed. We base this threshold on the fact that any more than 4xlog(242) (almost 22) could be considered as the lower end of O(n), being near n/10, and hence we could make the transition there. The lower bound is there to help if you wish to quickly see how many more edges it would take if your criteria for reaching O(log(n)) is lower. 
+
+We see the experimental result is significantly lower than the conservative theoretical estimate, different enough to suggest that the ER model of the docnet2 network is a weak model but in my opinion, still a usable model. The predicted result does vary but it is within 15-20% of the experimental, which is as good as, or just slightly weaker than many statistical models used in important applications elsewhere in medicine or psychology. On the other hand, it makes little sense to model a network of doctors interacting with each other as a G(n, p) network where nodes are connected randomly and independently of each other, for reasons we discussed before. Overall, we come to the conclusion that it takes around 1100 edges to be removed before we loose giant components and that the ER model weakly models our network.
+
+### Q4 - Centrality and removing nodes
+
+This task is longer than it seems, as there is a large variety of methods that can be used to find the centrality of nodes. Here we examine and compare the results of and importance of the following methods: degree, PageRank, betweenness and closeness. We exclude some measures as they are simply generalizations of others or because those that are included are very similar and improved versions of the ones excluded.   
+
+```{r Centrality calculations}
+# Degree centrality
+deg_centy = centr_degree(docnet2, mode = "all")
+deg_centy = deg_centy$res / max(deg_centy$res)
+# Betweennes centrality
+bet_centy = betweenness(docnet2, v = V(docnet2), directed = TRUE)
+bet_centy = bet_centy / max(bet_centy)
+# Closeness centrality
+clo_centy = closeness(docnet2, vids = V(docnet2), mode = "all")
+clo_centy = clo_centy / max(clo_centy)
+# PageRank scores
+prk_centy = page_rank(docnet2, algo = "prpack", vids = V(docnet2),
+                      directed = TRUE, damping = 0.85)
+prk_centy = prk_centy$vector / max(prk_centy$vector)
+
+# Data frame for all centrality measures
+centrality_data = data.frame(
+    node_index = c(1:242),
+    deg_centy,
+    bet_centy,
+    clo_centy,
+    prk_centy
+)
+```
+
+Calculating these measures of centrality is quite simple, but now the representation is the difficult part. We hence plot the network and have the node color change with the value for some centrality measure. First we see what degree centrality looks like on a plot:
+
+```{r degree centrality plot}
+# Color array based on centrality values
+num_cols= length((unique(deg_centy)))
+centy_cols = rainbow(num_cols, start = 2/6, end = 1)[deg_centy*num_cols]
+par(mar = c(0, 0, 2, 0))
+plot(docnet2, vertex.size = 4, vertex.color = centy_cols,
+     vertex.frame.color = "black", vertex.shape = "circle",
+     vertex.label = NA, edge.curved = 0, edge.arrow.size = 0,
+     edge.color = "grey", edge.lty = 2,
+     main = "docnet2 network (Colored by degree centrality)")
+legend(1, 1, legend = c("Low", "Mid-low", "Medium", "Mid-high", "High"), title = "Centrality",
+       col = c("green", "cyan", "blue", "purple", "red"), lty = 0, pch = 16)
+```
+
+Its quite easy to understand why nodes near the "outside" would be blue and those deeper inside the clusters are progressively more and more red if we remember how igraph designs these plots, so its not at all surprising to see this pattern emerge. This plot is essentially equivalent to the degree distribution distribution plot at the start of this project, and as we have already seen there are a few but significant number of nodes with degree much higher than the mean (red to dark blue on the plot). This means for us that if we eliminate these nodes then there will be fewer and fewer nodes that have the potential to transmit information across the network very quickly just due to the amount of connections they have. However we must be careful with this line of thinking, because we've seen that some nodes only have a high indegree and 0 outdegree whereas some have the opposite, and the proportions of all nodes with such properties makes a huge difference to what may happen when something is transmit over the network.
+
+Taking a quick look at in and outdegree centrality:
+
+```{r out/indegree centrality plot}
+# Outdegree centrality
+outdeg_centy = centr_degree(docnet2, mode = "out")
+outdeg_centy = outdeg_centy$res / max(outdeg_centy$res)
+
+num_cols = length((unique(outdeg_centy)))
+centy_cols = rainbow(num_cols, start = 2/6, end = 1)[outdeg_centy*num_cols]
+par(mar = c(0, 0, 2, 0))
+plot(docnet2, vertex.size = 4, vertex.color = centy_cols,
+     vertex.frame.color = "black", vertex.shape = "circle",
+     vertex.label = NA, edge.curved = 0, edge.arrow.size = 0,
+     edge.color = "grey", edge.lty = 2,
+     main = "docnet2 network (Colored by outdegree centrality)") 
+legend(1, 1, legend = c("Low", "Mid-low", "Medium", "Mid-high", "High"), title = "Centrality",
+       col = c("green", "cyan", "blue", "purple", "red"), lty = 0, pch = 16)
+
+# Outdegree centrality
+indeg_centy = centr_degree(docnet2, mode = "in")
+indeg_centy = indeg_centy$res / max(indeg_centy$res)
+
+num_cols = length((unique(indeg_centy)))
+centy_cols = rainbow(num_cols, start = 2/6, end = 1)[indeg_centy*num_cols]
+par(mar = c(0, 0, 2, 0))
+plot(docnet2, vertex.size = 4, vertex.color = centy_cols,
+     vertex.frame.color = "black", vertex.shape = "circle",
+     vertex.label = NA, edge.curved = 0, edge.arrow.size = 0,
+     edge.color = "grey", edge.lty = 2,
+     main = "docnet2 network (Colored by indegree centrality)")
+legend(1, 1, legend = c("Low", "Mid-low", "Medium", "Mid-high", "High"), title = "Centrality",
+       col = c("green", "cyan", "blue", "purple", "red"), lty = 0, pch = 16)
+```
+
+This makes it clearer to see why we should be skeptical of this, as we see that so many nodes have a high outdegree centrality, and so we can expect them to be spreading any information around the network quickly. But we also see that the majority of nodes have quite a low indegree centrality, which means that there are relatively few sources for them to be receiving any information from. What this could add up to is the fact that man nodes link to a few nodes overall and those few nodes are the keys to remove in order to most efficiently disrupt the network. Finding these is trivial, as we can find sort the nodes by descending overall degree and take the first however many. This measure of centrality may be quite important to consider when removing nodes later.
+
+To consider which of the other measures to focus on, we should look at the context of the network. It may be better to focus on betweenness centrality too perhaps, as we might benefit from considering how many times a certain doctor is in the path of connections between two other doctors. This would show us which doctors best act as relays of information or messengers so to speak, who may or may not use the information themselves but are very good at passing it on through the paths of connections they have. Eliminating these doctors from the network will make it harder for some doctors to receive information from others as it would take significantly longer (due to the path possibly being longer).
+
+```{r betweenness centrality plot}
+num_cols = length(unique(bet_centy))
+centy_cols = rainbow(num_cols, start = 2/6, end = 1)[bet_centy*num_cols]
+par(mar = c(0, 0, 2, 0))
+plot(docnet2, vertex.size = 4, vertex.color = centy_cols, vertex.label = NA,
+     vertex.frame.color = "black", vertex.shape = "circle", edge.curved = 0,
+     edge.arrow.size = 0, edge.color = "grey", edge.lty = 2,
+     main = "docnet2 network (Colored by betweenness centrality)")
+legend(1, 1, legend = c("Low", "Mid-low", "Medium", "Mid-high", "High"), title = "Centrality",
+       col = c("green", "cyan", "blue", "purple", "red"), lty = 0, pch = 16)
+```
+
+```{r closeness centrality plot}
+num_cols = length(unique(clo_centy))
+centy_cols = rainbow(num_cols, start = 2/6, end = 1)[clo_centy*num_cols]
+par(mar = c(0, 0, 2, 0))
+plot(docnet2, vertex.size = 4, vertex.color = centy_cols, vertex.label = NA,
+     vertex.frame.color = "black", vertex.shape = "circle", edge.curved = 0,
+     edge.arrow.size = 0, edge.color = "grey", edge.lty = 2,
+     main = "docnet2 network (Colored by closeness centrality)")
+legend(1, 1, legend = c("Low", "Mid-low", "Medium", "Mid-high", "High"), title = "Centrality",
+       col = c("green", "cyan", "blue", "purple", "red"), lty = 0, pch = 16)
+```
+
+Additionally, we may want to rank a doctors importance as a node by how important their connections are as well, with the immediate being more influential than the distant connections of course. If we take a look at how the graph looks like colored by PageRank centrality, we see this:
+
+```{r PageRank centrality plot}
+num_cols = length(unique(prk_centy))
+centy_cols = rainbow(num_cols, start = 2/6, end = 1)[prk_centy*num_cols]
+par(mar = c(0, 0, 2, 0))
+plot(docnet2, vertex.size = 4, vertex.color = centy_cols, vertex.label = NA,
+     vertex.frame.color = "black", vertex.shape = "circle", edge.curved = 0,
+     edge.arrow.size = 0, edge.color = "grey", edge.lty = 2,
+     main = "docnet2 network (Colored by PageRank centrality)")
+legend(1, 1, legend = c("Low", "Mid-low", "Medium", "Mid-high", "High"), title = "Centrality",
+       col = c("green", "cyan", "blue", "purple", "red"), lty = 0, pch = 16)
+```
+
+Interestingly we see that one of the four cities has almost no doctors with a high PageRank centrality, whilst the other three do. This may suggest that removing some doctors from that city may have little bearing on how disrupted the network is as none of the have "important" connections. With this measure, we see that each city has its own important group of doctors and this is quite interesting as we can now be more specific about which parts of the network we may wish to disrupt more than others.
+
+Keeping all these ideas in mind, we now will observe how the largest component size changes as we incrementally remove the nodes of highest centrality for the various measures. We do this because component size is a good indicator of how well connected the network is, and a network being in many small components indicates a small number of edges or a lack of connectedness amongst all the nodes overall. Therefore we can choose to model "disruption" (as the question asks) by size of the largest component. In our network, average component size will mean very little as we have seen how the component sizes are distributed here, and so we will not focus on that.
+
+First we will see what happens in the case of doing this by degree centrality. we will observe the changes as we remove the top 50 nodes.
+
+```{r Removing nodes by degree centrality}
+# Temporary copy of network to play around with
+temp_network = docnet2
+
+num_to_remove = 100
+
+# Storing maximum and average size per each iteration
+deg_comp_size = c(1:num_to_remove+1)
+
+# Initial largest component size
+component_data = clusters(temp_network, mode = "strong")
+deg_comp_size[1] = max(component_data$csize)
+
+# Degree centrality
+deg_centy = centr_degree(temp_network, mode = "all")
+deg_centy = deg_centy$res
+
+# Removing nodes one by one and finding size
+for (i in 1:num_to_remove) {
+    top_node = which.max(deg_centy)
+    temp_network = temp_network - V(temp_network)[top_node]
+    component_data = clusters(temp_network, mode = "strong")
+    deg_comp_size[i+1] = max(component_data$csize)
+    
+    # new degree centrality
+    deg_centy = centr_degree(temp_network, mode = "all")
+    deg_centy = deg_centy$res
+    }
+
+# Setting up data frame for plotting
+deg_size_data = data.frame(
+    # Number of nodes randomly removed
+    num_to_remove = c(0:num_to_remove),
+    deg_comp_size
+    )
+
+# Plotting largest component size over time
+ggplot(deg_size_data) +
+    geom_line(aes(x = num_to_remove, y = deg_comp_size), color = "red",
+              size = 1) +
+    scale_y_continuous(breaks = seq(0, 200, 20)) +
+    scale_x_continuous(breaks = seq(0, 100, 10)) +
+    theme_bw() +
+    theme(panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          axis.line = element_line(colour = "blue", size = 1.5)) + 
+    xlab("Number of nodes removed") +
+    ylab("Size of largest component") + 
+    ggtitle("Size of largest component as nodes of highest degree centrality are removed")
+```
+
+Surprising results here. The size of the largest component decreases quite slowly as we remove the 44 nodes of highest degree centrality in the network, and then drops sharply after removing a few nodes after the 45th, 57th and 67th nodes (approximately). This suggests that perhaps degree centrality is not a good measure of centrality at all for the purpose of identifying nodes which disrupt the network when removed. The pattern may exist in some other measure, such as betweenness, closeness or PageRank.
+
+```{r echo=FALSE}
+source("CompSize-NodeRemoval.R")
+```
+
+```{r Removing nodes by other measures of centrality}
+# Plotting largest component size over time
+ggplot(comp_size_data, aes(x = x, y = y, color = type)) +
+    geom_line(size = 1) +
+    scale_y_continuous(breaks = seq(0, 200, 20)) +
+    scale_x_continuous(breaks = seq(0, 100, 10)) +
+    theme_bw() +
+    theme(panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          axis.line = element_line(colour = "black", size = 1.5)) + 
+    xlab("Number of nodes removed") +
+    ylab("Size of largest component") + 
+    ggtitle("Size of largest component as nodes of highest centrality are removed")
+```
+
+Now it becomes much more clear which nodes should be removed for greatest effect. The plot shows that if we define distruptedness in our specific network as the S(0) - S(n) (where S is the size of the largest component and n is the number of nodes removed) then ranking our nodes by their betweenness centrality is the best way to do it. With this measure, we see that we achieve greater disconnectedness at a higher rater as we remove nodes than the other two measures. We have now certainly found the nodes that should be removed to best disrupt the network, but we should now attempt to give our own explanation as to why it's these nodes rather than others.
+
+If we think about what betweenness centrality represents, then we can see why in the context of our network it makes a lot more sense for this to be the ideal measure of centrality. If we want to consider information transfer amongst doctors then we should be aware of what the shortest paths between any two doctors are and we should be aware that removing doctors that get information from one group to another quickly would hinder or even block the two groups ability to communicate. Looking into research into this measure of centrality, we see it's a strong indicator of how important nodes are in telecommunications networks, social networks and quite conveniently for us, network representations of scientific cooperation. This hopefully sheds some light on why nodes removed preferentially by their betweenness centrality disrupt the network the most.
+
+### Q5 - Simulating information "epidemic"
+
+After learning a fair amount about the network we are working with, we will now simulate the spread of an epidemic through the network. This epidemic will be information transfer, and we seek to understand what affects how quickly or widely information is transferred throughout the network. Using the provided functions in the data file given, lets "infect" some randomly selected nodes and observe how the epidemic spreads through 2000 time steps say, with the probability of passing information on at 0.3.
+
+```{r epidemic testing}
+# Simulating spread of epidemic
+sim_time = 2000
+num_init_infected = 20
+epi_sim_rand = simEpi(docnet2, init_infected = sample(242, num_init_infected),
+                      inf.prob = 0.3, max.time = sim_time)
+num_infected = max(epi_sim_rand$numInfections[, 2])
+
+# Plot of number nodes infected over time
+ggplot(epi_sim_rand$numInfections) +
+    geom_line(aes(x = t, y = n.infected), color = "red", size = 1) +
+    scale_y_continuous(breaks = seq(0, num_infected, ceiling(num_infected/10))) +
+    scale_x_continuous(breaks = seq(0, sim_time, ceiling(sim_time/10))) +
+    theme_bw() +
+    theme(panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          axis.line = element_line(colour = "blue", size = 1.5)) + 
+    xlab("Time steps passed") +
+    ylab("Number of nodes infected") + 
+    ggtitle("Spread of epidemic over time on docnet2 network")
+```
+
+With these parameters, we see a somewhat linear relationship between the number of infections and time. Looking at the line closely, we see some periods of a plateau and some where the increase is sharp, and these may be attributable to the epidemic encountering nodes with 0 outdegree and waiting on a few other nodes which may have a small outdegree to pass the infection, and when the epidemic reaches a node with a very high outdegree and can pass the epidemic on to many other nodes in relatively fewer time-steps. 
+
+Now to make progress on the question asked of us. In order to find which nodes tend to be exposed to new information the fastest, we should ideally start off with exposing random nodes to the information, and repeating the simulation multiple times, with each simulation having a different set of 20 randomly selected starting nodes. We can then monitor the number of simulations in which each node gets infected and by having many simulations and also restricting the number of time steps as well as infection probability, we should see some pattern emerge amongst nodes which are infected more often than others. 
+
+```{r echo=FALSE}
+source("InfectedRandomNodes.R")
+```
+
+```{r Pattern from random start}
+# Plot of number nodes infected over time
+ggplot(infec_data) +
+    geom_line(aes(x, y = infec_prone[2, ]), color = "red", size = 0.5) +
+    scale_y_continuous(breaks = seq(0, max(infec_data), max(infec_data)/10)) +
+    scale_x_continuous(breaks = seq(0, 242, 20)) +
+    theme_bw() +
+    theme(panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          axis.line = element_line(colour = "blue", size = 1.5)) + 
+    xlab("Node index") +
+    ylab("relative number of times infected") + 
+    ggtitle("Proneness of infection for each node")
+```
+
+The plot we see above shows how many times in 250 simulations (of 500 time-steps) each node was infected with information by the end. We stick to a small number of time steps because we want to see which nodes get infected quickly rather than dilute the pattern with other nodes who many be infected just due to the time being large. We set the probability accordingly so that by the end of each simulation between 80-100 nodes have been infected. We repeat each simulation for a set of random starting nodes 25 times and repeat the process for 10 different sets of starting infected nodes. With this we hope to see a pattern of nodes that are infected much more often than others despite the change in initial conditions and short time span. This would let us filter out which nodes usually get infected first. Of course with two degrees of randomness, the results may vary a significant amount between plots, but we do see some patterns emerging. We see that a few nodes with index around 125, some nodes with index between 20 and 40 and some nodes with index around 215 usually are infected in many more simulations than others. The exact indices can easily be found, but we are concerned with repeating patterns here.
+
+Now we should look more at the attributes of these nodes we have identified. Namely their degree, centrality and node data that we were given. We can easily find the nodes we are talking about here:
+
+```{r Infection-Prone node attributes}
+num_nodes = 20
+max_inf_prone = c(1:num_nodes)
+# finding top num_nodes most infection prone nodes
+for (i in 1:num_nodes) {
+    max_inf_prone[i] = which.max(infec_prone[2, ])
+    infec_prone = infec_prone[ ,-max_inf_prone[i]]
+    }
+
+max_inf_prone
+```
+
+We see the nodes with indexes near the number we discussed earlier, namely near the 120's, between 20 and 40 and near 215 or so. 
+
+We should now repeat this process but now by infecting a certain number of nodes with the highest betweenness centrality. This, as we discovered earlier is the key to how connected the network is, hence infecting these nodes should ensure that the information spreads to the maximum number of nodes in a short time (or so we hope).
+
+```{r echo=FALSE}
+source("InfectedBetweennessNodes.R")
+```
+```{r Pattern from betweenness start}
+# Plot of number nodes infected over time
+ggplot(infec_data) +
+    geom_line(aes(x, y = infec_prone[2, ]), color = "red", size = 0.5) +
+    scale_y_continuous(breaks = seq(0, max(infec_data), max(infec_data)/10)) +
+    scale_x_continuous(breaks = seq(0, 242, 20)) +
+    theme_bw() +
+    theme(panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          axis.line = element_line(colour = "blue", size = 1.5)) + 
+    xlab("Node index") +
+    ylab("relative number of times infected") + 
+    ggtitle("Proneness of infection for each node")
+```
+
+Now we see what may seem like a problem in the graph, but we must remember that there is no "fairness" in the initial condition anymore, and that the starting nodes are chosen by betweenness centrality, of which nodes in city 1 have most of the highest values in (as we can see from plots in Q4). This plot shows us that when we expose doctors that act as important messengers between groups to new information, it will spread to city 1 much faster than it would to the other 3 cities. We are lucky in that we can read off which city the nodes are from by their index, as the nodes were added to the network ordered by nodeCity. Plotting this visually nevertheless:
+
+```{r Infection proneness by city}
+# Data frames for city size lines
+num_city1 = data.frame(
+    nodes_rem1 = 117, y = c(1:100),
+    city1 = factor(ceiling(100))
+    )
+num_city2 = data.frame(
+    nodes_rem2 = 165, y = c(1:100),
+    city2 = factor(ceiling(100))
+    )
+num_city3 = data.frame(
+    nodes_rem3 = 207, y = c(1:100),
+    city3 = factor(ceiling(100))
+    )
+num_city4 = data.frame(
+    nodes_rem4 = 242, y = c(1:100),
+    city4 = factor(ceiling(100))
+    )
+
+# Plot of number nodes infected over time
+ggplot(infec_data) +
+    geom_line(aes(x, y = infec_prone[2, ]), color = "red", size = 0.5) +
+    scale_y_continuous(breaks = seq(0, max(infec_data), max(infec_data)/10)) +
+    scale_x_continuous(breaks = seq(0, 242, 20)) +
+    theme_bw() +
+    theme(panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          axis.line = element_line(colour = "blue", size = 1.5)) + 
+    xlab("Node index") +
+    ylab("relative number of times infected") + 
+    ggtitle("Proneness of infection for each node") +
+    geom_line(aes(x = nodes_rem1, y), linetype = 2, num_city1) +
+    geom_line(aes(x = nodes_rem2, y), linetype = 2, num_city2) +
+    geom_line(aes(x = nodes_rem3, y), linetype = 2, num_city3) +
+    geom_line(aes(x = nodes_rem4, y), linetype = 2, num_city4)
+
+# PLot of network colored by proneness
+num_cols = max(infec_prone[2, ])
+prony_cols = rainbow(num_cols, start = 2/6, end = 1)[infec_prone[2, ]]
+par(mar = c(0, 0, 2, 0))
+plot(docnet2, vertex.size = 4, vertex.color = prony_cols, vertex.label = NA,
+     vertex.frame.color = "black", vertex.shape = "circle", edge.curved = 0,
+     edge.arrow.size = 0, edge.color = "grey", edge.lty = 2,
+     main = "docnet2 network (Colored by proneness to infection)")
+legend(1, 1, legend = c("Low", "Mid-low", "Medium", "Mid-high", "High"), title = "Proneness",
+       col = c("green", "cyan", "blue", "purple", "red"), lty = 0, pch = 16)
+```
+
+The first line plot illustrates the idea being discussed much more obviously. Now its clear that nodes in city 1 are exposed to the information much more often at a high speed than nodes in cities 2, 4 and especially 3. Seeing this on the network plots helps as well. If we compare this plot to the plot by betweenness centrality in Q4, it becomes clearer why nodes in cities 1 and 2 seem to have a much quicker exposure to the information than others. Of course, we should still keep in mind that the igraph plot isn't by city exactly, but does model that attribute quite well simply due to the nature of the connections between nodes in a given city, and hence the majority of red/purple nodes are in and around cities 1 and 2 on the plot.
+
+It seems that now answering the question of who gets infected first and last is a matter of finding what the proneness to infection is dependent on. In this investigation, we have found 1 independent variable and that is the set of initially infected nodes. If we infect nodes randomly, we see that a certain set of nodes (with some variation) is usually infected first, whereas if we infect by highest betweenness centrality, its clear that a more specific range of nodes is infected first. As for their exact indexes, we have found/can trivially find them after the work done so far.
+
+Now we should look at how infecting nodes based on some other given attributes such as their journal subscription! We start of with assuming that those doctors who subscribe to 5 or more medical journals are those who are genuinely interested in reading them and keep up to date with new information in medicine. We are also assuming that those who subscribe to 4 or less journals or have no answer are less likely to not be keeping up to date with information, or just got unlucky for the purposes of this investigation. We will do the same as we did above, we will randomly choose 20 nodes from those with 5 or more journals subscribed and then proceed to simulate an epidemic. 
+ 
+```{r echo=FALSE}
+source("InfectedJournalReaders.R")
+```
+
+```{r Pattern from journal readers start}
+# Plot of number nodes infected over time
+ggplot(infec_data) +
+    geom_line(aes(x, y = infec_prone[2, ]), color = "red", size = 0.5) +
+    scale_y_continuous(breaks = seq(0, max(infec_data), max(infec_data)/10)) +
+    scale_x_continuous(breaks = seq(0, 242, 20)) +
+    theme_bw() +
+    theme(panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          axis.line = element_line(colour = "blue", size = 1.5)) + 
+    xlab("Node index") +
+    ylab("relative number of times infected") + 
+    ggtitle("Proneness of infection for each node")
+
+# Plot of network colored by proneness
+num_cols = max(infec_prone[2, ])
+jour_cols = rainbow(num_cols, start = 2/6, end = 1)[infec_prone[2, ]]
+par(mar = c(0, 0, 2, 0))
+plot(docnet2, vertex.size = 4, vertex.color = jour_cols, vertex.label = NA,
+     vertex.frame.color = "black", vertex.shape = "circle", edge.curved = 0,
+     edge.arrow.size = 0, edge.color = "grey", edge.lty = 2,
+     main = "docnet2 network (Colored by proneness to infection)")
+legend(1, 1, legend = c("Low", "Mid-low", "Medium", "Mid-high", "High"), title = "Proneness",
+       col = c("green", "cyan", "blue", "purple", "red"), lty = 0, pch = 16)
+```
+
+Now when we begin with giving information to doctors who read more journals, we see the information spreads quite well over the network as a whole, with a much higher average "proneness" value present in the network. We can see this in the network plot, where we see how the doctors who are now receiving information quickly are now spread quite well through the cities and are spreading their information relatively often to those around them! In a a way this contradicts what we discovered earlier, as we now see that the "best" way to spread information is by starting with those who read more journals (or putting information into those journals) and letting doctors who read them spread the information. We run 10 trials with 10 simulations each, with each trial having a different set of 20 doctors that read more than 5 journals AND have the information. Of course there are very few nodes with a particularly high proneness to receiving information, but overall the information distributes quite well over the network and given more time it would quite likely spread very evenly.
+
+With all the analysis above, we can say with confidence that we are capable of finding which nodes would be best to start off with to spread information and which nodes the information tends to get to the fastest when it starts in the hands of doctors with certain properties or journal subscriptions etc. Additionally, we are also capable of finding those doctors who seem to get information much later then others or much less often, and we have discussed this above. 
+
+Finally, we move on to determining what it is that makes these doctors able to get information quickly. First we extract the nodes that have the highest proneness to infection, and then we will do some Elementary Data Analysis or EDA to find any relations or patterns that may surface. 
+
+```{r which nodes get info fast}
+num_nodes = 50
+max_inf_prone = c(1:num_nodes)
+# finding top num_nodes most infection prone nodes
+for (i in 1:num_nodes) {
+    temp = which.max(infec_prone[2, ])
+    max_inf_prone[i] = infec_prone[1, temp]
+    infec_prone = infec_prone[ ,-temp]
+    }
+
+max_inf_prone
+```
+
+This is the list of doctors that we have determined get the information the fastest when the doctors who read journals more are exposed to the information first. Below, we have calculated some tables to see what proportions of the total nodes in each category are represented here in our list of doctors exposed to information the fastest, from various attributes of the nodes. We are doing this by first finding out how many doctors from our most infection prone list are in each category for a particular node attribute, then seeing how that value compares to the total number of nodes in the network, to get an idea of proportion and to avoid falling for any false conclusions that may seem statistically significant at first. 
+
+```{r What makes them special?1}
+# Investigating what city they come from
+cat("\nNumber of these doctors coming from each city:")
+table(V(docnet2)$nodeCity[max_inf_prone]) / table(V(docnet2)$nodeCity)
+```
+
+First, we see that doctors from all cities except 4 (and perhaps city 3) are reasonably well represented in our list, implying there is something about city 4 which does not draw in new findings from journal reading doctors all over the network. Conversely, city 2 has a slightly better representation than city 1, which we saw earlier has the nodes of highest betweenness centrality and largest population.
+
+```{r What makes them special?2}
+# what their relative betweenness centrality may be
+bet_centy = betweenness(docnet2, v = V(docnet2), directed = TRUE)
+high_bet_centy = ifelse(bet_centy[max_inf_prone] / mean(bet_centy) >= 1,
+                        "high", "low")
+cat("\nBetweenness centrality of these doctors:")
+table(high_bet_centy[])
+```
+
+Now as we see how many of our nodes have a greater than average betweenness centrality, it becomes clear that there is a moderate swing towards most having a higher than average value, indicating not only that these doctors also tend to be those that are vital to keeping groups of doctors well connected, but also that doctors with high betweenness are exposed to information more often regardless of whether they are the ones reading the journals or not (sort of a consequence of what we have already concluded).
+
+```{r What makes them special?3}
+# What year did these doctors start
+cat("\nYears started as a doctor:")
+table(c(V(docnet2)$nodeMed_sch_yr[max_inf_prone])) /
+    table(V(docnet2)$nodeMed_sch_yr)[1:6]
+```
+
+The doctors who have been practicing for the longest (from 1919 or before) have the lowest representation in our list, and those who have been practicing for slightly less time (since 1920-1929) seem to have a significant representation here. This is a little confusing, especially as the doctors who have worked for even less time don't seem to have more significant of a representation. We can leave this as an example of an inconclusive case where no pattern seems to be emerging, or we could attempt to give some weak explanation based on context or history of the 1920's, but we wont.
+
+```{r What makes them special?4}
+# What are the specialisations of these doctors
+cat("\nSpecialities of these doctors:")
+table(V(docnet2)$nodeSpecialty[max_inf_prone]) /
+    table(V(docnet2)$nodeSpecialty)[1:4]
+```
+
+The conclusion here however can be drawn with confidence, as GP's and pediatricians seem to make up very few of those that usually get new information from others who read journals first. A significant proportion of doctors who specialize in internal medicine were in the list, implying that they may be more receptive to information about the specific information we are spreading, or that they are approached more with advice about this particular medical information. GP's on the other hand (who also forward patients to specialists) are very poorly represented in this list. 
+
+```{r What makes them special?5}
+# What is the makeup of their free-time social circles
+cat("\nMain social circles:")
+table(V(docnet2)$nodeFreeTime[max_inf_prone]) /
+    table(V(docnet2)$nodeFreeTime)[1:3]
+```
+
+Finally, we look at an example where no conclusion can be drawn, and quite surprisingly, in the case of who doctors socialise with in free time. It seems that whether they talk to only doctors, mainly non-doctors or both, their representation in our list is not significantly different. This could imply that perhaps the spread of information may not be occurring during free time and hence giving us almost no pattern.
+
+We could produce many more of these tables or even graphs, but already we can say that we have identified certain traits of doctors/ attributes of nodes which may be indicative of how quickly they are exposed to new information in the network. We will now move on and attempt to do a similar thing to see what might be causing some doctors to adopt certain drugs quicker.
+
+### Q6 - Why did some prescribe drugs earlier than others?
+
+To start off with, lets discuss possible strategies we could use. We could begin by making an assumption, perhaps the most sensible of which could simply be that doctors who adopted the drug first were the ones who found out about it first. If we assume this case, then we simply "infect" the doctors who adopted the drug earliest, simulate the information spread and then check to see if the doctors who received the information last were also ones who adopted it last. This would confirm our assumption and allow us to draw the conclusion that adoption date depends on the date they discovered the drug (be it weakly or strongly, we have yet to find out). 
+
+An alternative and more far-fetched method we could attempt would be to run the simulation in reverse, simulating the reversal of time by assuming everyone has adopted the new drug at the start, and then spreading an epidemic of memory loss across the network. At first thought, this might seem tempting to the more daring, but it quickly becomes clear that spread of memory loss is not the inverse of spread of information, as in this network there are nodes with degree greater than 1, and it is directed. 
+
+Perhaps later we may wish to start with other assumptions to attempt to find evidence for some relation, but for now, we stick to the first method and see if we have any revelations. As usual, we setup the initial conditions and run the simulation (external script):
+
+```{r echo=FALSE}
+temp_network = docnet2
+source('SimulateEpidemic.R')
+```
+
+Now that we've done that, we want to find the nodes that did not usually find out about the information quickly, i.e doctors that took longer to be exposed to information. 
+
+```{r Finding least prone nodes}
+num_nodes = 100
+lst_inf_prone = c(1:num_nodes)
+# finding top num_nodes most infection prone nodes
+for (i in 1:num_nodes) {
+    temp = which.min(infec_prone[2, ])
+    lst_inf_prone[i] = infec_prone[1, temp]
+    infec_prone = infec_prone[ ,-temp]
+}
+```
+
+We choose to have the top 100 in our list this time, as 50 may be too small of a sample to check. We should be careful however, as the more nodes we take the more and more diluted any pattern there may be becomes. We plot the results below by category, and attempt to show a pattern between those who received the information later and the date they adopted the medicine. 
+
+```{r Adoption date proportions}
+# Dealing with values of 98's and 99's
+adoption_props = table(factor(V(docnet2)$nodeAdoptionDate[lst_inf_prone],lev=1:20)) /
+                     table(V(docnet2)$nodeAdoptionDate)
+adoption_props = ifelse(adoption_props ==  98, 19, adoption_props)
+adoption_props = ifelse(adoption_props ==  99, 20, adoption_props)
+
+
+adoption_tab = data.frame(
+    x = c(1:20),
+    y = adoption_props
+    )
+# Plotting adoption date against proportion of doctors that prescribe late
+ggplot(adoption_tab) +
+    geom_bar(stat = "identity",
+             aes(x, y), fill = "purple",
+             color = "black", width = 0.8) +
+    geom_smooth(aes(x, y), method = loess,  level = 0.8) + 
+    scale_x_continuous(breaks = seq(0, 20, 1)) + theme_bw() +
+    ylim(c(0, 1)) +
+    theme(panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          axis.line = element_line(colour = "black", size = 1.5)) + 
+    xlab("Adoption data/other info catagories") +
+    ylab("Proportion of all doctors in the catagory") + 
+    ggtitle("Proportions of doctors that adopted new drug at certain times")
+```
+
+Amazingly we have found a pattern here! It does seem that from the 100 least likely to get information quickly, most of them were doctors that ended up prescribing the drug later. This means that after the assumption that early adoption date => early exposure, we have shown that late exposure => late adoption date. Whilst this may seem a little obvious, proving this implication allows us to suggest that rather than other factors such as doctors being unwilling to change, or not being part of a certain city, or not reading the right journals, the reason why some doctors prescribed the drug later than others is simply because they found out about it later (this can in turn depend on some of those however). And we have already mostly solved that problem, with our previous investigations into why some doctors get exposed to new information first or last! So now we can apply the logic we previously deduced (some attributes => early exposure) to show that doctors that are from cities 2 or 3, having a low betweenness centrality (not being links between groups of doctors or being important to connecting other doctors together), being a GP or pediatrician and having started during the 1910's, 30's or post WW2 implies that they would end up prescribing this new drug sooner than most doctors who do not fit into these groups. 
+
+The "trend" line added here smooths out the underlying pattern and demonstrates what we are trying to describe above. Despite the confidence interval being quite large, even in the worst case it seems that the underlying patter is still there, and that our conclusion will still hold, albeit slightly weaker.
+
+We now have somewhat of an answer for our question now, even though we started with an assumption that is only likely to be true and not certain. But surely this is the case in many other fields and investigations, right?
+
+-END OF DOCUMENT-
+
+
+
