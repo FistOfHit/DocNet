@@ -1,5 +1,5 @@
 ---
-title: "DataSciCW2"
+title: "Main Investigation File"
 author: "Hitesh Kumar"
 date: "27 December 2017"
 output: html_document
@@ -21,9 +21,7 @@ library(RColorBrewer)
 set.seed(1234)
 ```
 
-Hitesh Kumar (01058403) Rmd file for coursework 2:
-
-### Data & Q1
+### Data
 
 Lets begin by visually inspecting the data we are given to get some insight before any calculations
 
@@ -118,7 +116,7 @@ From these plots we get some interesting information. For the degree distributio
 
 To determine if the network is scale free, we could perform some statistical tests such as kolomogorov-smirnov or others, but since its not expected, we will meet expectations and speculate based on qualitative evidence. From the degree distribution plot, and as we discuss above, there are a noticeable number of nodes with a very large degree, in fact there are 14 with degree greater than or equal to twice the mean degree (just as a benchmark for how large is much larger). This makes up about 6% of the nodes in the network and so this could be evidence that this network is scale-free. This also might make sense in the application of our analysis, as its likely that doctors who are more popular or renowned for their knowledge would be the place to go to for other doctors seeking advice or to socialise, and hence as nodes are added to the network, its entirely possible they would be added preferentially to node with a higher degree. Additionally, on removal of nodes at random, its unlikely that If some statistical tests were to be conducted or even if we plotted the distribution on a log-log plot we may be able to make a stronger claim. As of current, we maintain that the network is scale-free.
 
-### Q2 - Community detection
+### Community detection
 
 Whilst we already have defined communities in terms of the cities that the doctors are from, with the degree distributions we observe above, its likely the some doctors may be acting as hubs connecting two cities with the number of interactions they've had, or that some doctors may operate in one city but may be interacting primarily with doctors of another city. For this reason, a more mathematically sound separation of communities may be appropriate. The method used here is the "leading eigenvector method", developed by Newman and implemented in R by Gabor Csardi.
 
@@ -216,7 +214,7 @@ legend(1, 1, legend = c("Correct", "Incorrect"), title = "Result of detection",
 
 Now its clear that the previously present communities have been preserved (with a few exceptions as we explained before) and only city 1 has been split into two communities, which now we must say is incorrect as there never were 5 cities to begin with.
 
-### Q3 - Giant components and deleting edges
+### Giant components and deleting edges
 
 Finding the components of a given graph is relatively simple in R, however its defining and justifying what type of components you look for that is difficult. Here we choose to look for strongly connected components in our directed network, which may be a better way to determine components as we are now looking for sets of vertices for which any pair have a directed path connecting them in that component. This may be better in our case as we may want to only consider components or groups of doctors that that can trace their knowledge back to a source via reversing a directed path, and the presence of a component then would mean a group of doctors that are inter-dependent only and do not gain or transfer knowledge to others outside the component. We also do this because the other two ways of finding components return silly results. 
 
@@ -303,7 +301,7 @@ Now we can see how the size of the giant component decreases as we incrementally
 
 We see the experimental result is significantly lower than the conservative theoretical estimate, different enough to suggest that the ER model of the docnet2 network is a weak model but in my opinion, still a usable model. The predicted result does vary but it is within 15-20% of the experimental, which is as good as, or just slightly weaker than many statistical models used in important applications elsewhere in medicine or psychology. On the other hand, it makes little sense to model a network of doctors interacting with each other as a G(n, p) network where nodes are connected randomly and independently of each other, for reasons we discussed before. Overall, we come to the conclusion that it takes around 1100 edges to be removed before we loose giant components and that the ER model weakly models our network.
 
-### Q4 - Centrality and removing nodes
+### Centrality and removing nodes
 
 This task is longer than it seems, as there is a large variety of methods that can be used to find the centrality of nodes. Here we examine and compare the results of and importance of the following methods: degree, PageRank, betweenness and closeness. We exclude some measures as they are simply generalizations of others or because those that are included are very similar and improved versions of the ones excluded.   
 
@@ -508,7 +506,7 @@ Now it becomes much more clear which nodes should be removed for greatest effect
 
 If we think about what betweenness centrality represents, then we can see why in the context of our network it makes a lot more sense for this to be the ideal measure of centrality. If we want to consider information transfer amongst doctors then we should be aware of what the shortest paths between any two doctors are and we should be aware that removing doctors that get information from one group to another quickly would hinder or even block the two groups ability to communicate. Looking into research into this measure of centrality, we see it's a strong indicator of how important nodes are in telecommunications networks, social networks and quite conveniently for us, network representations of scientific cooperation. This hopefully sheds some light on why nodes removed preferentially by their betweenness centrality disrupt the network the most.
 
-### Q5 - Simulating information "epidemic"
+### Simulating information "epidemic"
 
 After learning a fair amount about the network we are working with, we will now simulate the spread of an epidemic through the network. This epidemic will be information transfer, and we seek to understand what affects how quickly or widely information is transferred throughout the network. Using the provided functions in the data file given, lets "infect" some randomly selected nodes and observe how the epidemic spreads through 2000 time steps say, with the probability of passing information on at 0.3.
 
@@ -750,7 +748,7 @@ Finally, we look at an example where no conclusion can be drawn, and quite surpr
 
 We could produce many more of these tables or even graphs, but already we can say that we have identified certain traits of doctors/ attributes of nodes which may be indicative of how quickly they are exposed to new information in the network. We will now move on and attempt to do a similar thing to see what might be causing some doctors to adopt certain drugs quicker.
 
-### Q6 - Why did some prescribe drugs earlier than others?
+### Why did some prescribe drugs earlier than others?
 
 To start off with, lets discuss possible strategies we could use. We could begin by making an assumption, perhaps the most sensible of which could simply be that doctors who adopted the drug first were the ones who found out about it first. If we assume this case, then we simply "infect" the doctors who adopted the drug earliest, simulate the information spread and then check to see if the doctors who received the information last were also ones who adopted it last. This would confirm our assumption and allow us to draw the conclusion that adoption date depends on the date they discovered the drug (be it weakly or strongly, we have yet to find out). 
 
